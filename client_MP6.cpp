@@ -48,6 +48,7 @@
 #include <numeric>
 #include <vector>
 #include "reqchannel.h"
+#include "bounded_buffer.h"
 
 /*
     This next file will need to be written from scratch, along with
@@ -63,12 +64,22 @@
 /*
     All *_params structs are optional,
     but they might help.
- */
+*/
+
+struct Request {
+	std::string name;
+	void *response_buffer;
+};
+
 struct request_thread_params {
-    
+	void *request_buffer;
+	int num_requests;
+	Request item;
 };
 
 struct worker_thread_params {
+	void *request_buffer;
+	
     
 };
 
@@ -193,7 +204,9 @@ int main(int argc, char * argv[]) {
             What goes in this section of the code?
             Hint: it looks a bit like what went here 
             in MP7, but only a *little* bit.
-         */
+        */
+	BoundedBuffer<Request> req_buffer(200);
+	
         
         ofs.close();
         std::cout << "Sleeping..." << std::endl;
