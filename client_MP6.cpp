@@ -13,15 +13,14 @@
 
     MP6 for Dr. //Tyagi's
     Ahmed's sections of CSCE 313.
- */
+*/
 
 /*--------------------------------------------------------------------------*/
 /* DEFINES */
 /*--------------------------------------------------------------------------*/
 
-    /* -- (none) -- */
-    /* -- This might be a good place to put the size of
-        of the patient response buffers -- */
+#define NUM_REQUEST_THREADS 3
+#define NUM_STAT_THREADS 3
 
 /*--------------------------------------------------------------------------*/
 /* INCLUDES */
@@ -53,7 +52,7 @@
 /*
     This next file will need to be written from scratch, along with
     semaphore.h and (if you choose) their corresponding .cpp files.
- */
+*/
 
 //#include "bounded_buffer.h"
 
@@ -61,30 +60,41 @@
 /* DATA STRUCTURES */
 /*--------------------------------------------------------------------------*/
 
-/*
-    All *_params structs are optional,
-    but they might help.
+/* -----Information Flow-----
+   Request Threads(3) -> Request Buffer(1) -> Worker Threads(n) ->
+   Response Buffers(3) -> Stat Threads(3) -> Histograms(3)
 */
 
 struct Request {
-	std::string name;
-	void *response_buffer;
+	std::string name;                    // who the request is for
+	BoundedBuffer<int> *response_buffer; // where the request goes
 };
 
-struct request_thread_params {
-	void *request_buffer;
-	int num_requests;
-	Request item;
+struct RT_PARAMS {
+	BoundedBuffer<Request> *request_buffer; // where to put the requests
+	int num_requests;                       // how many of them to add
+	Request r;                              // request to add
 };
 
-struct worker_thread_params {
-	void *request_buffer;
-	
-    
+struct WT_PARAMS {
+	void *request_buffer;          // where to get the requests
+	RequestChannel *workerChannel; // channel to make requests over
+        // request already know where they should go
 };
 
-struct stat_thread_params {
-    
+struct ST_PARAMS {
+	void *response_buffer; // where to get responses
+	void *histogram;       // where to put them
+};
+
+struct Histogram {
+	Histogram() {
+		hist = {10};
+		hist_lock = PTHREAD_MUTEX_INITIALIZER;
+	}
+
+	std::vector<int> hist;
+	pthread_mutex_t hist_lock;
 };
 
 /*
@@ -92,7 +102,7 @@ struct stat_thread_params {
     in a multithreaded environment. It's primary purpose
     is printing debug messages while multiple threads
     are in execution.
- */
+*/
 class atomic_standard_output {
     pthread_mutex_t console_lock;
 public:
@@ -125,18 +135,31 @@ std::string make_histogram(std::string name, std::vector<int> *data) {
     return results;
 }
 
-/*
-    You'll need to fill these in.
-*/
-void* request_thread_function(void* arg) {
+/*--------------------------------------------------------------------------*/
+/* Thread Funcions                                                          */
+/*--------------------------------------------------------------------------*/
+
+void* rt_func(void* arg) {
+	
+	// handle parameters
+	RT_PARAMS p = *(RT_PARAMS *)arg;
+	BoundedBuffer<Request> *request_buffer = p.request_buffer;
+	int num_requests                       = p.num_requests;
+	Request r                              = p.r;
+
+	// push num_request Requests to the buffer
+	for(int i=0; i<num_requests; i++) {
+		request_buffer->push(r);
+	}
+   	
+	return NULL;
+}
+
+void* wt_func(void* arg) {
     
 }
 
-void* worker_thread_function(void* arg) {
-    
-}
-
-void* stat_thread_function(void* arg) {
+void* st_func(void* arg) {
     
 }
 
@@ -205,9 +228,54 @@ int main(int argc, char * argv[]) {
             Hint: it looks a bit like what went here 
             in MP7, but only a *little* bit.
         */
-	BoundedBuffer<Request> req_buffer(200);
+
+	BoundedBuffer<Request> request_buffer(b);
+
+	BoundedBuffer<int> response_buffer_john(b);
+	BoundedBuffer<int> response_buffer_jane(b);
+	BoundedBuffer<int> response_buffer_joe(b);
 	
-        
+	std::vector<int> histogram_john(10, 0);
+	std::vector<int> histogram_jane(10, 0);
+	std::vector<int> histogram_joe(10, 0);
+	
+	/*-------------------------------------------------------------------*/
+	/* Request Threads                                                   */
+	/*-------------------------------------------------------------------*/
+
+	// request thread ids
+	pthread_t rt_ids[3];
+
+	// requests to be pushed to the buffer
+	Request reqs[] = {{"John Smith", &response_buffer_john},
+	                  {"Jane Smith", &response_buffer_jane},
+	         	  {"Joe Smith",  &response_buffer_joe}};
+	
+	// parameters for request threads
+	RT_PARAMS rt_params[] = {{&request_buffer, n, reqs[0]},
+	                         {&request_buffer, n, reqs[1]},
+				 {&request_buffer, n, reqs[2]}};
+	
+	// create request threads
+	for(int i=0; i<3; i++)
+		pthread_create(&rt_ids[i], 0, &rt_func, (void *)&rt_params[i]);
+	
+	// join request threads
+	for(int i=0; i<3; i++)
+		pthread_join(rt_ids[i], NULL);
+
+	std::cout << "Request buffer size: " << request_buffer.size() << std::endl;
+	
+	/*-------------------------------------------------------------------*/
+	/* Worker Threads                                                    */
+	/*-------------------------------------------------------------------*/
+	
+
+	/*-------------------------------------------------------------------*/
+	/* Statistics Threads                                                */
+	/*-------------------------------------------------------------------*/
+
+
         ofs.close();
         std::cout << "Sleeping..." << std::endl;
         usleep(10000);
