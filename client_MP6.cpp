@@ -139,7 +139,7 @@ void* rt_func(void* arg) {
 	// push num_request Requests to the buffer
 	for(int i=0; i<num_requests; i++) {
 		request_buffer->push(r);
-		aso.print("pushing " + r.name);
+		aso.print("pushed " + r.name);
 	}
    
    	aso.print("request thread ended");
@@ -180,7 +180,7 @@ void* wt_func(void* arg) {
 }
 
 void* st_func(void* arg) {
-/*
+
 	aso.print("entered stat thread");
 
 	// handle parameters
@@ -188,23 +188,19 @@ void* st_func(void* arg) {
 	BoundedBuffer<std::string> *response_buffer = p.response_buffer;
 	std::vector<int> *histogram                 = p.histogram;
 
-
-	std::string response;
-
    	while(true) {
-		response = response_buffer->pop();
-		aso.print(response + " ");
+		std::string response = response_buffer->pop();
+		aso.print(response);
 
 		// quit when we find a quit message
-		if(response.compare("quit ") == 0) 
+		if(response.compare("quit") == 0) 
 			break;
 		
 		// update the histogram with the value
-		//histogram->at(stoi(response) / 10) += 1;
+		histogram->at(stoi(response) / 10) += 1;
 	}
 
 	aso.print("stat thread ended");
-*/
 
 	return NULL;
 }
@@ -359,6 +355,8 @@ int main(int argc, char * argv[]) {
 	for(int i=0; i<w; i++)
 		pthread_join(wt_ids[i], NULL);
 	
+	aso.print("worker threads joined");
+	
 	// push quit messages to stat threads
 	response_buffer_john.push("quit");
 	response_buffer_jane.push("quit");
@@ -377,6 +375,16 @@ int main(int argc, char * argv[]) {
 	/*-------------------------------------------------------------------*/
 	/* Print Results                                                     */
 	/*-------------------------------------------------------------------*/
+
+	std::string results_john = make_histogram("John Smith", &histogram_john);
+	std::string results_jane = make_histogram("Jane Smith", &histogram_jane);
+	std::string results_joe =  make_histogram("Joe Smith",  &histogram_joe);
+
+	std::cout << endl;
+	std::cout << "John Histogram: " << std::endl << results_john << std::endl;
+	std::cout << "Jane Histogram: " << std::endl << results_jane << std::endl;
+	std::cout << "Joe Histogram: "  << std::endl << results_joe  << std::endl;
+
 
         ofs.close();
         std::cout << "Sleeping..." << std::endl;

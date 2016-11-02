@@ -10,9 +10,9 @@ Semaphore::Semaphore(int n)
 void Semaphore::P()
 {
 	pthread_mutex_lock(&count_mutex);
-	while(count < 0)
-		pthread_cond_wait(&cond_count_inc, &count_mutex);
 	count--;
+	if(count < 0)
+		pthread_cond_wait(&cond_count_inc, &count_mutex);
 	pthread_mutex_unlock(&count_mutex);
 }
 
@@ -20,6 +20,7 @@ void Semaphore::V()
 {
 	pthread_mutex_lock(&count_mutex);
 	count++;
-	pthread_cond_signal(&cond_count_inc);
+	if(count <= 0) 
+		pthread_cond_signal(&cond_count_inc);
 	pthread_mutex_unlock(&count_mutex);
 }
