@@ -8,13 +8,13 @@
 template <class T> class BoundedBuffer {
 public:
 	BoundedBuffer(int n)
-		: full{0}, empty{n}, elems{} {}
+		: full(0), empty(n), lock(1), elems() {}
 		
 	void push(T elem);
 	T pop();
 	int size() { return elems.size(); }
 private:
-	Semaphore full, empty;
+	Semaphore full, empty, lock;
 	std::list<T> elems;
 };
 
@@ -24,17 +24,21 @@ private:
 
 template <class T> void BoundedBuffer<T>::push(T elem)
 {
-	empty.P();
+	empty.P(); // reduce number of empty spots
+	lock.P();  // mutually exclusive access to elems
 	elems.push_back(elem);
-	full.V();
+	lock.V();
+	full.V();  // increase number of elems
 }
 
 template <class T> T BoundedBuffer<T>::pop()
 {
-	full.P();
+	full.P();  // reduce number of elems
+	lock.P();  // mutually exclusive access to elems
 	T temp = elems.front();
 	elems.pop_front();
-	empty.V();
+	lock.V();
+	empty.V(); // increase number of empty spots
 
 	return temp;
 }

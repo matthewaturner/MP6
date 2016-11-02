@@ -67,7 +67,7 @@
 
 struct Request {
 	std::string name;                    // who the request is for
-	BoundedBuffer<int> *response_buffer; // where the request goes
+	BoundedBuffer<std::string> *response_buffer; // where the request goes
 };
 
 struct RT_PARAMS {
@@ -77,24 +77,13 @@ struct RT_PARAMS {
 };
 
 struct WT_PARAMS {
-	void *request_buffer;          // where to get the requests
-	RequestChannel *workerChannel; // channel to make requests over
-        // request already know where they should go
+	BoundedBuffer<Request> *request_buffer; // where to get the requests
+	RequestChannel *worker_channel;          // channel to make requests over
 };
 
 struct ST_PARAMS {
-	void *response_buffer; // where to get responses
-	void *histogram;       // where to put them
-};
-
-struct Histogram {
-	Histogram() {
-		hist = {10};
-		hist_lock = PTHREAD_MUTEX_INITIALIZER;
-	}
-
-	std::vector<int> hist;
-	pthread_mutex_t hist_lock;
+	BoundedBuffer<std::string> *response_buffer; // where to get responses
+	std::vector<int> *histogram;                 // where to put them
 };
 
 /*
@@ -115,9 +104,8 @@ public:
     }
 };
 
-atomic_standard_output threadsafe_standard_output;
+atomic_standard_output aso;
 
-/*--------------------------------------------------------------------------*/
 /* CONSTANTS */
 /*--------------------------------------------------------------------------*/
 
@@ -140,6 +128,7 @@ std::string make_histogram(std::string name, std::vector<int> *data) {
 /*--------------------------------------------------------------------------*/
 
 void* rt_func(void* arg) {
+	aso.print("entered request thread");
 	
 	// handle parameters
 	RT_PARAMS p = *(RT_PARAMS *)arg;
@@ -150,17 +139,74 @@ void* rt_func(void* arg) {
 	// push num_request Requests to the buffer
 	for(int i=0; i<num_requests; i++) {
 		request_buffer->push(r);
+		aso.print("pushing " + r.name);
 	}
-   	
+   
+   	aso.print("request thread ended");
 	return NULL;
 }
 
 void* wt_func(void* arg) {
-    
+	aso.print("entered worker");
+	
+	// handle parameters
+	WT_PARAMS p = *(WT_PARAMS *)arg;
+	BoundedBuffer<Request> *request_buffer = p.request_buffer;
+	RequestChannel *worker_channel         = p.worker_channel;
+
+	while(true) {
+		// take an item off the buffer
+		Request r = request_buffer->pop();
+
+		aso.print("processing \"" + r.name + "\"");
+
+		// quit when we find and item with name "quit"
+		if(r.name == "quit") {
+			worker_channel->send_request("quit");
+			delete worker_channel;
+			aso.print("worker thread ended");
+			break;
+		}
+
+		// ask server for response
+		std::string msg = "data " + r.name;
+		std::string response = worker_channel->send_request(msg);
+
+		// push request to response buffer
+		r.response_buffer->push(response);
+	}
+
+	return NULL;
 }
 
 void* st_func(void* arg) {
-    
+/*
+	aso.print("entered stat thread");
+
+	// handle parameters
+	ST_PARAMS p = *(ST_PARAMS *)arg;
+	BoundedBuffer<std::string> *response_buffer = p.response_buffer;
+	std::vector<int> *histogram                 = p.histogram;
+
+
+	std::string response;
+
+   	while(true) {
+		response = response_buffer->pop();
+		aso.print(response + " ");
+
+		// quit when we find a quit message
+		if(response.compare("quit ") == 0) 
+			break;
+		
+		// update the histogram with the value
+		//histogram->at(stoi(response) / 10) += 1;
+	}
+
+	aso.print("stat thread ended");
+*/
+
+	return NULL;
 }
 
 /*--------------------------------------------------------------------------*/
@@ -204,7 +250,7 @@ int main(int argc, char * argv[]) {
     }
     
     int pid = fork();
-    if(pid == 0){
+    if(pid == 0) {
         struct timeval start_time;
         struct timeval finish_time;
         int64_t start_usecs;
@@ -217,6 +263,7 @@ int main(int argc, char * argv[]) {
         std::cout << "b == " << b << std::endl;
         std::cout << "w == " << w << std::endl;
         
+	//aso.print("client started");
         std::cout << "CLIENT STARTED:" << std::endl;
         std::cout << "Establishing control channel... " << std::flush;
         RequestChannel *chan = new RequestChannel("control", RequestChannel::CLIENT_SIDE);
@@ -231,9 +278,9 @@ int main(int argc, char * argv[]) {
 
 	BoundedBuffer<Request> request_buffer(b);
 
-	BoundedBuffer<int> response_buffer_john(b);
-	BoundedBuffer<int> response_buffer_jane(b);
-	BoundedBuffer<int> response_buffer_joe(b);
+	BoundedBuffer<std::string> response_buffer_john(b);
+	BoundedBuffer<std::string> response_buffer_jane(b);
+	BoundedBuffer<std::string> response_buffer_joe(b);
 	
 	std::vector<int> histogram_john(10, 0);
 	std::vector<int> histogram_jane(10, 0);
@@ -259,22 +306,77 @@ int main(int argc, char * argv[]) {
 	// create request threads
 	for(int i=0; i<3; i++)
 		pthread_create(&rt_ids[i], 0, &rt_func, (void *)&rt_params[i]);
-	
-	// join request threads
-	for(int i=0; i<3; i++)
-		pthread_join(rt_ids[i], NULL);
 
-	std::cout << "Request buffer size: " << request_buffer.size() << std::endl;
-	
 	/*-------------------------------------------------------------------*/
 	/* Worker Threads                                                    */
 	/*-------------------------------------------------------------------*/
 	
+	// worker thread ids
+	pthread_t wt_ids[w];
 
+	// parameters for workers
+	WT_PARAMS wt_params[w];
+
+	// create worker threads
+	for(int i=0; i<w; i++) {
+		std::string s = chan->send_request("newthread");
+		RequestChannel *worker_channel = new RequestChannel(s, RequestChannel::CLIENT_SIDE);
+		wt_params[i] = WT_PARAMS{&request_buffer, worker_channel};
+		pthread_create(&wt_ids[i], 0, &wt_func, (void *)&wt_params[i]);
+	}
+	
 	/*-------------------------------------------------------------------*/
 	/* Statistics Threads                                                */
 	/*-------------------------------------------------------------------*/
 
+	// stat thread ids
+	pthread_t st_ids[3];
+
+	// parameters for stat threads
+	ST_PARAMS st_params[] = {{&response_buffer_john, &histogram_john},
+	                         {&response_buffer_jane, &histogram_jane},
+				 {&response_buffer_joe,  &histogram_joe}};
+	
+	// create stat threads
+	for(int i=0; i<3; i++)
+		pthread_create(&st_ids[i], 0, &st_func, (void *)&st_params[i]);
+
+	/*-------------------------------------------------------------------*/
+	/* Join Threads                                                      */
+	/*-------------------------------------------------------------------*/
+
+	// join request threads
+	for(int i=0; i<3; i++) {
+		pthread_join(rt_ids[i], NULL);
+		//aso.print("joinied a request thread");
+	}
+
+	// push quit messages to workers
+	for(int i=0; i<w; i++) 
+		request_buffer.push(Request{"quit", NULL});
+
+	// join worker threads
+	for(int i=0; i<w; i++)
+		pthread_join(wt_ids[i], NULL);
+	
+	// push quit messages to stat threads
+	response_buffer_john.push("quit");
+	response_buffer_jane.push("quit");
+	response_buffer_joe.push("quit");
+
+	// join stat threads
+	for(int i=0; i<3; i++)
+		pthread_join(st_ids[i], NULL);
+
+	std::cout << "size of john response buffer: " << response_buffer_john.size() <<std::endl;
+	std::cout << "size of jane response buffer: " << response_buffer_jane.size() <<std::endl;
+	std::cout << "size of joe response buffer: " << response_buffer_joe.size() << std::endl;
+
+	aso.print("done?");
+	
+	/*-------------------------------------------------------------------*/
+	/* Print Results                                                     */
+	/*-------------------------------------------------------------------*/
 
         ofs.close();
         std::cout << "Sleeping..." << std::endl;
