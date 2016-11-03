@@ -62,28 +62,26 @@ vector<int> *hist_ptr_joe;
 /* DATA STRUCTURES                                                          */
 /*--------------------------------------------------------------------------*/
 
-/* -----Information Flow-----
-   Request Threads(3) -> Request Buffer(1) -> Worker Threads(n) ->
-   Response Buffers(3) -> Stat Threads(3) -> Histograms(3)
-*/
-
 struct Request {
-	std::string name;                    // who the request is for
+	std::string name;                            // who the request is for
 	BoundedBuffer<std::string> *response_buffer; // where the request goes
 };
 
 struct RT_PARAMS {
+/* Request Thread Parameters */
 	BoundedBuffer<Request> *request_buffer; // where to put the requests
 	int num_requests;                       // how many of them to add
 	Request r;                              // request to add
 };
 
 struct WT_PARAMS {
+/* Worker Thread Parameters */
 	BoundedBuffer<Request> *request_buffer; // where to get the requests
-	RequestChannel *worker_channel;          // channel to make requests over
+	RequestChannel *worker_channel;         // channel to make requests over
 };
 
 struct ST_PARAMS {
+/* Stat Thread Parameters */
 	BoundedBuffer<std::string> *response_buffer; // where to get responses
 	std::vector<int> *histogram;                 // where to put them
 };
@@ -107,11 +105,6 @@ public:
 };
 
 atomic_standard_output aso;
-
-/* CONSTANTS */
-/*--------------------------------------------------------------------------*/
-
-    /* -- (none) -- */
 
 /*--------------------------------------------------------------------------*/
 /* HELPER FUNCTIONS */
@@ -137,6 +130,7 @@ void timed_print_histogram(int signum) {
 	it.it_value.tv_usec = 0;
 	setitimer(ITIMER_REAL, &it, 0);
 
+	// print histogram
 	std::string results_john = make_histogram("John Smith", hist_ptr_john);
 	std::string results_jane = make_histogram("Jane Smith", hist_ptr_jane);
 	std::string results_joe =  make_histogram("Joe Smith",  hist_ptr_joe);
@@ -152,7 +146,9 @@ void timed_print_histogram(int signum) {
 /*--------------------------------------------------------------------------*/
 
 void* rt_func(void* arg) {
-	
+/* 
+   Generates the desired number of requests and pushes them to the buffer.
+*/	
 	// handle parameters
 	RT_PARAMS p = *(RT_PARAMS *)arg;
 	BoundedBuffer<Request> *request_buffer = p.request_buffer;
@@ -168,6 +164,10 @@ void* rt_func(void* arg) {
 }
 
 void* wt_func(void* arg) {
+/* 
+   Sends requests from the buffer to the dataserver and stores responses
+   in their associated response buffers. 
+*/
 	
 	// handle parameters
 	WT_PARAMS p = *(WT_PARAMS *)arg;
@@ -197,6 +197,10 @@ void* wt_func(void* arg) {
 }
 
 void* st_func(void* arg) {
+/* 
+   Takes responses from the response buffer and fills out the histogram 
+   associated with that response buffer.
+*/
 
 	// handle parameters
 	ST_PARAMS p = *(ST_PARAMS *)arg;
@@ -298,7 +302,7 @@ int main(int argc, char * argv[]) {
 	hist_ptr_joe  = &histogram_joe;
 
 	/*-------------------------------------------------------------------*/
-	/* Set up Timer                                                      */
+	/* Set up Interval Timer                                                      */
 	/*-------------------------------------------------------------------*/
 
 	struct itimerval timer;
@@ -310,6 +314,12 @@ int main(int argc, char * argv[]) {
 	setitimer(ITIMER_REAL, &timer, NULL);
 
 	signal(SIGALRM, timed_print_histogram);
+
+	/*-------------------------------------------------------------------*/
+	/* Start Execution Timer                                             */
+	/*-------------------------------------------------------------------*/
+
+	gettimeofday(&start_time, NULL);
 	
 	/*-------------------------------------------------------------------*/
 	/* Request Threads                                                   */
@@ -392,6 +402,15 @@ int main(int argc, char * argv[]) {
 		pthread_join(st_ids[i], NULL);
 
 	/*-------------------------------------------------------------------*/
+	/* End Execution Timer                                               */
+	/*-------------------------------------------------------------------*/
+
+	gettimeofday(&finish_time, NULL);
+	
+	start_usecs = (start_time.tv_sec * 1e6) + start_time.tv_usec;
+	finish_usecs = (finish_time.tv_sec * 1e6) + finish_time.tv_usec;
+
+	/*-------------------------------------------------------------------*/
 	/* Print Results                                                     */
 	/*-------------------------------------------------------------------*/
 
@@ -403,7 +422,11 @@ int main(int argc, char * argv[]) {
 	std::cout << "John Histogram: " << std::endl << results_john << std::endl;
 	std::cout << "Jane Histogram: " << std::endl << results_jane << std::endl;
 	std::cout << "Joe Histogram: "  << std::endl << results_joe  << std::endl;
+	std::cout << std::endl;
+	std::cout << "Time to completion: " << 
+		std::to_string(finish_usecs - start_usecs) << " usecs" << std::endl; 
 
+	/*-------------------------------------------------------------------*/
 
         ofs.close();
         std::cout << "Sleeping..." << std::endl;
