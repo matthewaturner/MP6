@@ -42,6 +42,7 @@
 #include <string>
 #include <sstream>
 #include <sys/time.h>
+#include <signal.h>
 #include <assert.h>
 #include <fstream>
 #include <numeric>
@@ -49,15 +50,16 @@
 #include "reqchannel.h"
 #include "bounded_buffer.h"
 
-/*
-    This next file will need to be written from scratch, along with
-    semaphore.h and (if you choose) their corresponding .cpp files.
-*/
+/*--------------------------------------------------------------------------*/
+/* Global Pointers to Histograms                                            */
+/*--------------------------------------------------------------------------*/
 
-//#include "bounded_buffer.h"
+vector<int> *hist_ptr_john;
+vector<int> *hist_ptr_jane;
+vector<int> *hist_ptr_joe;
 
 /*--------------------------------------------------------------------------*/
-/* DATA STRUCTURES */
+/* DATA STRUCTURES                                                          */
 /*--------------------------------------------------------------------------*/
 
 /* -----Information Flow-----
@@ -123,12 +125,33 @@ std::string make_histogram(std::string name, std::vector<int> *data) {
     return results;
 }
 
+void timed_print_histogram(int signum) {
+
+	struct itimerval it;
+
+	signal(SIGALRM, timed_print_histogram);
+	
+	it.it_interval.tv_sec = 0;
+	it.it_interval.tv_usec = 0;
+	it.it_value.tv_sec = 2;
+	it.it_value.tv_usec = 0;
+	setitimer(ITIMER_REAL, &it, 0);
+
+	std::string results_john = make_histogram("John Smith", hist_ptr_john);
+	std::string results_jane = make_histogram("Jane Smith", hist_ptr_jane);
+	std::string results_joe =  make_histogram("Joe Smith",  hist_ptr_joe);
+
+	std::cout << "------------------------------" << std::endl;
+	std::cout << "John Histogram: " << std::endl << results_john << std::endl;
+	std::cout << "Jane Histogram: " << std::endl << results_jane << std::endl;
+	std::cout << "Joe Histogram: "  << std::endl << results_joe  << std::endl;
+}
+
 /*--------------------------------------------------------------------------*/
 /* Thread Funcions                                                          */
 /*--------------------------------------------------------------------------*/
 
 void* rt_func(void* arg) {
-	aso.print("entered request thread");
 	
 	// handle parameters
 	RT_PARAMS p = *(RT_PARAMS *)arg;
@@ -139,15 +162,12 @@ void* rt_func(void* arg) {
 	// push num_request Requests to the buffer
 	for(int i=0; i<num_requests; i++) {
 		request_buffer->push(r);
-		aso.print("pushed " + r.name);
 	}
    
-   	aso.print("request thread ended");
 	return NULL;
 }
 
 void* wt_func(void* arg) {
-	aso.print("entered worker");
 	
 	// handle parameters
 	WT_PARAMS p = *(WT_PARAMS *)arg;
@@ -158,13 +178,10 @@ void* wt_func(void* arg) {
 		// take an item off the buffer
 		Request r = request_buffer->pop();
 
-		aso.print("processing \"" + r.name + "\"");
-
 		// quit when we find and item with name "quit"
 		if(r.name == "quit") {
 			worker_channel->send_request("quit");
 			delete worker_channel;
-			aso.print("worker thread ended");
 			break;
 		}
 
@@ -181,8 +198,6 @@ void* wt_func(void* arg) {
 
 void* st_func(void* arg) {
 
-	aso.print("entered stat thread");
-
 	// handle parameters
 	ST_PARAMS p = *(ST_PARAMS *)arg;
 	BoundedBuffer<std::string> *response_buffer = p.response_buffer;
@@ -190,7 +205,6 @@ void* st_func(void* arg) {
 
    	while(true) {
 		std::string response = response_buffer->pop();
-		aso.print(response);
 
 		// quit when we find a quit message
 		if(response.compare("quit") == 0) 
@@ -199,8 +213,6 @@ void* st_func(void* arg) {
 		// update the histogram with the value
 		histogram->at(stoi(response) / 10) += 1;
 	}
-
-	aso.print("stat thread ended");
 
 	return NULL;
 }
@@ -259,7 +271,6 @@ int main(int argc, char * argv[]) {
         std::cout << "b == " << b << std::endl;
         std::cout << "w == " << w << std::endl;
         
-	//aso.print("client started");
         std::cout << "CLIENT STARTED:" << std::endl;
         std::cout << "Establishing control channel... " << std::flush;
         RequestChannel *chan = new RequestChannel("control", RequestChannel::CLIENT_SIDE);
@@ -281,6 +292,24 @@ int main(int argc, char * argv[]) {
 	std::vector<int> histogram_john(10, 0);
 	std::vector<int> histogram_jane(10, 0);
 	std::vector<int> histogram_joe(10, 0);
+
+	hist_ptr_john = &histogram_john;
+	hist_ptr_jane = &histogram_jane;
+	hist_ptr_joe  = &histogram_joe;
+
+	/*-------------------------------------------------------------------*/
+	/* Set up Timer                                                      */
+	/*-------------------------------------------------------------------*/
+
+	struct itimerval timer;
+
+	timer.it_interval.tv_sec = 0;
+	timer.it_interval.tv_usec = 0;
+	timer.it_value.tv_sec = 2;
+	timer.it_value.tv_usec = 0;
+	setitimer(ITIMER_REAL, &timer, NULL);
+
+	signal(SIGALRM, timed_print_histogram);
 	
 	/*-------------------------------------------------------------------*/
 	/* Request Threads                                                   */
@@ -342,10 +371,8 @@ int main(int argc, char * argv[]) {
 	/*-------------------------------------------------------------------*/
 
 	// join request threads
-	for(int i=0; i<3; i++) {
+	for(int i=0; i<3; i++)
 		pthread_join(rt_ids[i], NULL);
-		//aso.print("joinied a request thread");
-	}
 
 	// push quit messages to workers
 	for(int i=0; i<w; i++) 
@@ -354,8 +381,6 @@ int main(int argc, char * argv[]) {
 	// join worker threads
 	for(int i=0; i<w; i++)
 		pthread_join(wt_ids[i], NULL);
-	
-	aso.print("worker threads joined");
 	
 	// push quit messages to stat threads
 	response_buffer_john.push("quit");
@@ -366,12 +391,6 @@ int main(int argc, char * argv[]) {
 	for(int i=0; i<3; i++)
 		pthread_join(st_ids[i], NULL);
 
-	std::cout << "size of john response buffer: " << response_buffer_john.size() <<std::endl;
-	std::cout << "size of jane response buffer: " << response_buffer_jane.size() <<std::endl;
-	std::cout << "size of joe response buffer: " << response_buffer_joe.size() << std::endl;
-
-	aso.print("done?");
-	
 	/*-------------------------------------------------------------------*/
 	/* Print Results                                                     */
 	/*-------------------------------------------------------------------*/
@@ -380,7 +399,7 @@ int main(int argc, char * argv[]) {
 	std::string results_jane = make_histogram("Jane Smith", &histogram_jane);
 	std::string results_joe =  make_histogram("Joe Smith",  &histogram_joe);
 
-	std::cout << endl;
+	std::cout << "------------------------------" << std::endl;
 	std::cout << "John Histogram: " << std::endl << results_john << std::endl;
 	std::cout << "Jane Histogram: " << std::endl << results_jane << std::endl;
 	std::cout << "Joe Histogram: "  << std::endl << results_joe  << std::endl;
